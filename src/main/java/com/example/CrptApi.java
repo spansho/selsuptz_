@@ -13,6 +13,7 @@ import org.apache.hc.core5.http.ParseException;
 import org.apache.hc.core5.http.io.entity.EntityUtils;
 import org.apache.hc.core5.http.io.entity.StringEntity;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
@@ -29,6 +30,10 @@ public class CrptApi {
     private Semaphore semaphore;
 
     public CrptApi(TimeUnit timeUnit, int requestLimit) {
+
+        org.apache.log4j.Logger.getRootLogger().setLevel(org.apache.log4j.Level.OFF);
+        System.setProperty("org.apache.commons.logging.Log", "org.apache.commons.logging.impl.NoOpLog");
+        System.setProperty("org.apache.logging.log4j.simplelog.StatusLogger.level", "OFF");
         if (requestLimit <= 0 || timeUnit == null) {
             throw new IllegalArgumentException("requestLimit must be positive and timeUnit not null");
         }
@@ -45,20 +50,32 @@ public class CrptApi {
         );
     }
 
-    public void createDocument(Object document, String signature) throws IOException, InterruptedException, ParseException {
+    public String createDocument(Root document, String signature) throws IOException, InterruptedException, ParseException {
 
         semaphore.acquire();
-        try (CloseableHttpResponse response = sendRequest(document, signature)) {
-            int statusCode = response.getCode();
-            if (statusCode >= 200 && statusCode < 300) {
-                HttpEntity entity = response.getEntity();
-                String responseBody = EntityUtils.toString(entity, "UTF-8");
-                System.out.println("Response: " + responseBody);
-            } else {
-                System.err.println("API error: " + statusCode);
+
+        try {
+            HttpPost httpPost = new HttpPost(API_URL);
+            String json = objectMapper.writeValueAsString(document);
+            StringEntity entity = new StringEntity(json);
+            httpPost.setEntity(entity);
+            httpPost.setHeader("Content-Type", "application/json");
+            httpPost.setHeader("Signature", signature);
+
+            try (CloseableHttpResponse response = (CloseableHttpResponse) httpClient.execute(httpPost)) {
+                HttpEntity responseEntity = response.getEntity();
+                if (responseEntity != null) {
+                    return EntityUtils.toString(responseEntity, StandardCharsets.UTF_8);
+                } else {
+                    throw new IOException("Empty response from API");
+                }
             }
+        } finally {
         }
     }
+
+
+
 
 
     public void shutdown() {
@@ -83,17 +100,6 @@ public class CrptApi {
 
         // 3. Очистка семафора
         semaphore.drainPermits();
-    }
-
-
-    private CloseableHttpResponse sendRequest(Object document, String signature) throws IOException {
-        HttpPost httpPost = new HttpPost(API_URL);
-        String json = objectMapper.writeValueAsString(document);
-        StringEntity entity = new StringEntity(json);
-        httpPost.setEntity(entity);
-        httpPost.setHeader("Content-Type", "application/json");
-        httpPost.setHeader("Signature", signature);
-        return httpClient.execute(httpPost);
     }
 
 
@@ -318,9 +324,10 @@ public class CrptApi {
 
         CrptApi crptApi = new CrptApi(TimeUnit.SECONDS, 5);
         try {
-            Object document = new Root();
+            Root document = new Root();
             String signature = "signature";
-            crptApi.createDocument(document, signature);
+            var messageBack=crptApi.createDocument(document, signature);
+            System.out.println(messageBack);
         }
         finally {
             crptApi.shutdown();
